@@ -1,39 +1,43 @@
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::thread;
-use std::time::{Duration, Instant};
+use gpiod::{Chip, Options};
+use std::{thread, time::{Duration, Instant}};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Define GPIO pin (replace with your actual pin number)
-    let gpio_pin = "/sys/class/gpio/gpio391/value"; // Example GPIO pin path
+    // Open the GPIO chip (usually gpiochip0 on Jetson devices)
+    let chip = Chip::new("/dev/gpiochip0")?;
 
-    // Function to write value to GPIO pin
-    fn write_gpio(pin_path: &str, value: u8) -> Result<(), std::io::Error> {
-        let mut file = OpenOptions::new().write(true).open(pin_path)?;
-        write!(file, "{}", value)?;
-        Ok(())
+    // Get the GPIO line (replace with the actual line number for your GPIO pin)
+    let line = chip.request_lines(Options::output(&[13]))?;
+
+    // Request the line as output
+    let handle = line;
+
+    // Define PWM parameters
+    let frequency = 50; // 50 Hz for servo
+    let period = Duration::from_micros(1_000_000 / frequency); // Period in microseconds
+    let min_pulse = Duration::from_micros(1000); // Minimum pulse width in microseconds
+    let max_pulse = Duration::from_micros(2000); // Maximum pulse width in microseconds
+
+    // Function to convert angle to pulse width
+    fn angle_to_pulse(angle: f64, min_pulse: Duration, max_pulse: Duration) -> Duration {
+        let pulse_range = max_pulse - min_pulse;
+        min_pulse + pulse_range.mul_f64(angle / 180.0)
     }
 
-    // PWM parameters
-    let frequency = 50; // PWM frequency in Hz
-    let period = 1.0 / frequency as f64; // Period in seconds
-    let pulse_width = 0.0015; // Pulse width in seconds (1.5 ms for middle position)
+    // Move the servo to specific angles
+    let angles = [0.0, 90.0, 180.0];
+    for &angle in &angles {
+        let pulse = angle_to_pulse(angle, min_pulse, max_pulse);
+        println!("Setting angle to {} degrees, pulse width to {:?}", angle, pulse);
 
-    // Main loop
-    let start_time = Instant::now();
-    loop {
-        let elapsed = start_time.elapsed().as_secs_f64();
-        let current_time = elapsed % period;
+        let start_time = Instant::now();
+        while start_time.elapsed() < Duration::from_secs(1) {
+            handle.set_values(1u8)?;
+            thread::sleep(pulse);
 
-        if current_time < pulse_width {
-            // Set GPIO high
-            write_gpio(gpio_pin, 1)?;
-        } else {
-            // Set GPIO low
-            write_gpio(gpio_pin, 0)?;
+            handle.set_values(0u8)?;
+            thread::sleep(period - pulse);
         }
-
-        // Sleep to control frequency
-        thread::sleep(Duration::from_micros((period * 1_000_000.0) as u64) - Duration::from_micros((pulse_width * 1_000_000.0) as u64));
     }
+
+    Ok(())
 }

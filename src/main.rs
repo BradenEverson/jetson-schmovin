@@ -1,45 +1,39 @@
-use std::thread::sleep;
-use std::time::Duration;
-use sysfs_gpio::{Direction, Pin};
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::thread;
+use std::time::{Duration, Instant};
 
-const SERVO_PIN: u64 = 18; // Change this to your servo's GPIO pin number
-const PWM_PERIOD: u64 = 20000; // Period in microseconds for a 50Hz frequency
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Define GPIO pin (replace with your actual pin number)
+    let gpio_pin = "/sys/class/gpio/gpio391/value"; // Example GPIO pin path
 
-fn set_servo_pulse(pin: &Pin, pulse_width: u64) -> sysfs_gpio::Result<()> {
-    pin.set_value(1)?;
-    sleep(Duration::from_micros(pulse_width));
-    pin.set_value(0)?;
-    sleep(Duration::from_micros(PWM_PERIOD - pulse_width));
-    Ok(())
-}
-
-fn main() -> sysfs_gpio::Result<()> {
-    let servo_pin = Pin::new(SERVO_PIN);
-    servo_pin.export()?;
-    servo_pin.set_direction(Direction::Out)?;
-
-    let min_pulse = 500;  // Minimum pulse length in microseconds
-    let max_pulse = 2500; // Maximum pulse length in microseconds
-
-    // Move servo to min position
-    for _ in 0..50 {
-        set_servo_pulse(&servo_pin, min_pulse)?;
+    // Function to write value to GPIO pin
+    fn write_gpio(pin_path: &str, value: u8) -> Result<(), std::io::Error> {
+        let mut file = OpenOptions::new().write(true).open(pin_path)?;
+        write!(file, "{}", value)?;
+        Ok(())
     }
-    sleep(Duration::from_secs(1));
 
-    // Move servo to max position
-    for _ in 0..50 {
-        set_servo_pulse(&servo_pin, max_pulse)?;
+    // PWM parameters
+    let frequency = 50; // PWM frequency in Hz
+    let period = 1.0 / frequency as f64; // Period in seconds
+    let pulse_width = 0.0015; // Pulse width in seconds (1.5 ms for middle position)
+
+    // Main loop
+    let start_time = Instant::now();
+    loop {
+        let elapsed = start_time.elapsed().as_secs_f64();
+        let current_time = elapsed % period;
+
+        if current_time < pulse_width {
+            // Set GPIO high
+            write_gpio(gpio_pin, 1)?;
+        } else {
+            // Set GPIO low
+            write_gpio(gpio_pin, 0)?;
+        }
+
+        // Sleep to control frequency
+        thread::sleep(Duration::from_micros((period * 1_000_000.0) as u64) - Duration::from_micros((pulse_width * 1_000_000.0) as u64));
     }
-    sleep(Duration::from_secs(1));
-
-    // Move servo to middle position
-    let middle_pulse = (min_pulse + max_pulse) / 2;
-    for _ in 0..50 {
-        set_servo_pulse(&servo_pin, middle_pulse)?;
-    }
-    sleep(Duration::from_secs(1));
-
-    servo_pin.unexport()?;
-    Ok(())
 }
